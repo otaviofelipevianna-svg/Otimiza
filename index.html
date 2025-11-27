@@ -23,12 +23,12 @@
     <!-- 4. Seu Aplicativo -->
     <script type="text/babel" data-type="module">
         // Importações (Versão ESM para evitar erros)
-        import React, { useState, useEffect } from 'https://esm.sh/react@18.2.0';
+        import React, { useState, useEffect, useRef } from 'https://esm.sh/react@18.2.0';
         import { createRoot } from 'https://esm.sh/react-dom@18.2.0/client';
         import { 
             LayoutDashboard, Users, ShoppingBag, CreditCard, Wallet, 
             Plus, Trash2, Edit2, TrendingUp, CheckCircle, Clock, 
-            MessageCircle, Play 
+            MessageCircle, Play, Download, Upload, Save
         } from 'https://esm.sh/lucide-react@0.292.0';
 
         // --- Componentes Visuais ---
@@ -105,14 +105,15 @@
             const [activeTab, setActiveTab] = useState('dashboard');
             
             // --- ESTADO COM PERSISTÊNCIA LOCAL ---
-            // Ao iniciar, tenta ler do localStorage. Se não tiver nada, inicia vazio [].
             const [clients, setClients] = useState(() => JSON.parse(localStorage.getItem('otimiza_clients')) || []);
             const [purchases, setPurchases] = useState(() => JSON.parse(localStorage.getItem('otimiza_purchases')) || []);
             const [subscriptions, setSubscriptions] = useState(() => JSON.parse(localStorage.getItem('otimiza_subscriptions')) || []);
             const [withdrawals, setWithdrawals] = useState(() => JSON.parse(localStorage.getItem('otimiza_withdrawals')) || []);
 
+            // Referência para o input de arquivo (invisível)
+            const fileInputRef = useRef(null);
+
             // --- SALVAMENTO AUTOMÁTICO ---
-            // Sempre que os dados mudam, salva no navegador.
             useEffect(() => localStorage.setItem('otimiza_clients', JSON.stringify(clients)), [clients]);
             useEffect(() => localStorage.setItem('otimiza_purchases', JSON.stringify(purchases)), [purchases]);
             useEffect(() => localStorage.setItem('otimiza_subscriptions', JSON.stringify(subscriptions)), [subscriptions]);
@@ -152,7 +153,7 @@
                 setIsWithdrawalModalOpen(false);
             };
 
-            // --- Handlers (Lógica de Salvar) ---
+            // --- Handlers (Lógica de Salvar/Editar/Excluir) ---
             
             const handleSaveClient = () => {
                 const payload = { ...newClient, charged: Number(newClient.charged), received: Number(newClient.received) };
@@ -203,6 +204,56 @@
                 }
             };
 
+            // --- FUNÇÕES DE BACKUP ---
+            const handleBackup = () => {
+                const data = {
+                    clients,
+                    purchases,
+                    subscriptions,
+                    withdrawals,
+                    backupDate: new Date().toISOString()
+                };
+                const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+                const url = URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                a.href = url;
+                a.download = `otimiza_backup_${new Date().toLocaleDateString('pt-BR').replace(/\//g, '-')}.json`;
+                document.body.appendChild(a);
+                a.click();
+                document.body.removeChild(a);
+                URL.revokeObjectURL(url);
+            };
+
+            const handleImportClick = () => {
+                fileInputRef.current.click();
+            };
+
+            const handleImportFile = (event) => {
+                const file = event.target.files[0];
+                if (!file) return;
+
+                const reader = new FileReader();
+                reader.onload = (e) => {
+                    try {
+                        const data = JSON.parse(e.target.result);
+                        if(confirm('Isso substituirá os dados atuais pelos dados do backup. Deseja continuar?')) {
+                            if (data.clients) setClients(data.clients);
+                            if (data.purchases) setPurchases(data.purchases);
+                            if (data.subscriptions) setSubscriptions(data.subscriptions);
+                            if (data.withdrawals) setWithdrawals(data.withdrawals);
+                            alert('Backup restaurado com sucesso!');
+                        }
+                    } catch (error) {
+                        alert('Erro ao ler arquivo de backup. Verifique se é um arquivo .json válido.');
+                        console.error(error);
+                    }
+                };
+                reader.readAsText(file);
+                // Resetar o input para permitir selecionar o mesmo arquivo novamente se necessário
+                event.target.value = null;
+            };
+
+
             // Cálculos
             const totalReceived = clients.reduce((acc, c) => acc + (c.received || 0), 0);
             const totalExpenses = purchases.reduce((acc, i) => acc + (i.price || 0), 0) + 
@@ -212,6 +263,15 @@
 
             return (
                 <div className="flex h-screen bg-gray-50 text-gray-900 font-sans selection:bg-black selection:text-white">
+                    {/* Input de arquivo invisível para importação */}
+                    <input 
+                        type="file" 
+                        ref={fileInputRef} 
+                        onChange={handleImportFile} 
+                        style={{ display: 'none' }} 
+                        accept=".json"
+                    />
+
                     {/* Sidebar */}
                     <aside className="w-64 bg-black text-white flex flex-col shadow-2xl z-20 hidden md:flex">
                         <div className="p-6 border-b border-gray-800 flex flex-col items-center">
@@ -246,7 +306,18 @@
                                 </button>
                             ))}
                         </nav>
-                        <div className="p-4"><p className="text-xs text-gray-600 text-center">Versão Local Segura</p></div>
+                        
+                        {/* Área de Backup na Sidebar */}
+                        <div className="p-4 border-t border-gray-800 space-y-2">
+                             <p className="text-xs text-gray-500 uppercase font-bold pl-2">Dados</p>
+                             <button onClick={handleBackup} className="w-full flex items-center gap-2 px-3 py-2 text-xs text-gray-300 hover:text-white hover:bg-gray-900 rounded transition-colors">
+                                <Download size={14} /> Fazer Backup
+                             </button>
+                             <button onClick={handleImportClick} className="w-full flex items-center gap-2 px-3 py-2 text-xs text-gray-300 hover:text-white hover:bg-gray-900 rounded transition-colors">
+                                <Upload size={14} /> Importar Dados
+                             </button>
+                        </div>
+                        <div className="p-2 pb-4"><p className="text-[10px] text-gray-600 text-center">Versão Local Segura</p></div>
                     </aside>
 
                     {/* Mobile Nav */}
@@ -282,6 +353,7 @@
                                         <Card title="Lucro" value={formatBRL(netProfit)} icon={Wallet} trend={netProfit >= 0 ? 'up' : 'down'} />
                                         <Card title="Assinaturas/Mês" value={formatBRL(subscriptions.reduce((acc, i) => acc + (i.price || 0), 0))} icon={CreditCard} />
                                     </div>
+                                    
                                     <div className="bg-white p-6 rounded-xl border border-gray-100 shadow-sm">
                                         <h3 className="font-bold mb-4">Últimos Projetos</h3>
                                         {clients.length === 0 ? <p className="text-gray-400">Sem dados.</p> : (
@@ -294,6 +366,27 @@
                                                 ))}
                                             </div>
                                         )}
+                                    </div>
+
+                                    {/* Área de Backup no Dashboard (Para Mobile e acesso fácil) */}
+                                    <div className="bg-white p-6 rounded-xl border border-gray-100 shadow-sm">
+                                        <h3 className="font-bold mb-4 flex items-center gap-2"><Save size={20}/> Segurança de Dados</h3>
+                                        <div className="flex flex-col md:flex-row gap-4">
+                                            <button onClick={handleBackup} className="flex-1 flex items-center justify-center gap-2 bg-gray-100 hover:bg-gray-200 text-gray-800 p-4 rounded-lg border transition-colors">
+                                                <div className="bg-white p-2 rounded-full shadow-sm"><Download size={20}/></div>
+                                                <div className="text-left">
+                                                    <p className="font-bold">Baixar Backup</p>
+                                                    <p className="text-xs text-gray-500">Salve seus dados no PC</p>
+                                                </div>
+                                            </button>
+                                            <button onClick={handleImportClick} className="flex-1 flex items-center justify-center gap-2 bg-gray-100 hover:bg-gray-200 text-gray-800 p-4 rounded-lg border transition-colors">
+                                                <div className="bg-white p-2 rounded-full shadow-sm"><Upload size={20}/></div>
+                                                <div className="text-left">
+                                                    <p className="font-bold">Restaurar Dados</p>
+                                                    <p className="text-xs text-gray-500">Carregue um arquivo .json</p>
+                                                </div>
+                                            </button>
+                                        </div>
                                     </div>
                                 </div>
                             )}
