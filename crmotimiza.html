@@ -1,0 +1,853 @@
+import React, { useState, useEffect } from 'react';
+import { 
+  LayoutDashboard, 
+  Users, 
+  ShoppingBag, 
+  CreditCard, 
+  Wallet, 
+  Plus, 
+  Trash2, 
+  Edit2, 
+  TrendingUp, 
+  TrendingDown,
+  CheckCircle,
+  Clock,
+  MessageCircle,
+  Play
+} from 'lucide-react';
+
+// --- Importações do Firebase ---
+import { initializeApp } from "firebase/app";
+import { 
+  getFirestore, 
+  collection, 
+  addDoc, 
+  updateDoc, 
+  deleteDoc, 
+  doc, 
+  onSnapshot 
+} from "firebase/firestore";
+import { 
+  getAuth, 
+  signInWithCustomToken, 
+  signInAnonymously, 
+  onAuthStateChanged 
+} from "firebase/auth";
+
+// --- Configuração do Firebase ---
+// NOTA: Para este ambiente de preview, usamos a configuração interna.
+// Quando você for hospedar seu site, substitua a linha abaixo pela sua const firebaseConfig.
+const firebaseConfig = JSON.parse(__firebase_config);
+
+/* PARA USAR SEU PRÓPRIO PROJETO (quando exportar o código):
+  Substitua a linha acima por:
+  
+  const firebaseConfig = {
+    apiKey: "AIzaSyDQ8ggMxe09e6qf92B-1lv3A6gCP-J33Js",
+    authDomain: "otimiza-9e42f.firebaseapp.com",
+    projectId: "otimiza-9e42f",
+    storageBucket: "otimiza-9e42f.firebasestorage.app",
+    messagingSenderId: "482070105168",
+    appId: "1:482070105168:web:cf8aae2f888946f196d555",
+    measurementId: "G-HNWMPJ468D"
+  };
+*/
+
+const app = initializeApp(firebaseConfig);
+const auth = getAuth(app);
+const db = getFirestore(app);
+const appId = typeof __app_id !== 'undefined' ? __app_id : 'otimiza-crm';
+
+// --- Componentes UI Reutilizáveis ---
+
+const Card = ({ title, value, subtext, icon: Icon, trend }) => (
+  <div className="bg-white p-6 rounded-xl border border-gray-100 shadow-sm hover:shadow-md transition-shadow">
+    <div className="flex justify-between items-start">
+      <div>
+        <p className="text-gray-500 text-sm font-medium uppercase tracking-wider">{title}</p>
+        <h3 className="text-2xl font-bold mt-2 text-gray-900">{value}</h3>
+        {subtext && <p className={`text-sm mt-1 ${trend === 'up' ? 'text-green-600' : trend === 'down' ? 'text-red-600' : 'text-gray-400'}`}>{subtext}</p>}
+      </div>
+      <div className={`p-3 rounded-lg ${trend === 'up' ? 'bg-green-50 text-green-600' : trend === 'down' ? 'bg-red-50 text-red-600' : 'bg-black text-white'}`}>
+        <Icon size={24} />
+      </div>
+    </div>
+  </div>
+);
+
+const Button = ({ children, onClick, variant = 'primary', className = '' }) => {
+  const baseStyle = "px-4 py-2 rounded-lg font-medium transition-colors flex items-center gap-2";
+  const variants = {
+    primary: "bg-black text-white hover:bg-gray-800",
+    secondary: "bg-gray-100 text-gray-700 hover:bg-gray-200",
+    danger: "bg-red-50 text-red-600 hover:bg-red-100",
+    outline: "border border-gray-300 text-gray-700 hover:bg-gray-50"
+  };
+  return (
+    <button onClick={onClick} className={`${baseStyle} ${variants[variant]} ${className}`}>
+      {children}
+    </button>
+  );
+};
+
+const Modal = ({ isOpen, onClose, title, children }) => {
+  if (!isOpen) return null;
+  return (
+    <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-50 p-4">
+      <div className="bg-white rounded-2xl w-full max-w-lg shadow-2xl overflow-hidden animate-in fade-in zoom-in duration-200">
+        <div className="p-6 border-b border-gray-100 flex justify-between items-center bg-gray-50">
+          <h2 className="text-xl font-bold text-gray-900">{title}</h2>
+          <button onClick={onClose} className="text-gray-400 hover:text-red-500 transition-colors">✕</button>
+        </div>
+        <div className="p-6">
+          {children}
+        </div>
+      </div>
+    </div>
+  );
+};
+
+const StatusBadge = ({ status }) => {
+  const styles = {
+    'Negociação': 'bg-gray-100 text-gray-600 border-gray-200',
+    'Em Processo': 'bg-blue-50 text-blue-600 border-blue-100',
+    'Concluído': 'bg-green-50 text-green-600 border-green-100'
+  };
+  
+  const icons = {
+    'Negociação': MessageCircle,
+    'Em Processo': Clock,
+    'Concluído': CheckCircle
+  };
+
+  const Icon = icons[status] || MessageCircle;
+
+  return (
+    <span className={`px-3 py-1 rounded-full text-xs font-semibold border flex items-center gap-1 w-fit ${styles[status] || styles['Negociação']}`}>
+      <Icon size={12} />
+      {status}
+    </span>
+  );
+};
+
+// --- Aplicação Principal ---
+
+export default function App() {
+  const [user, setUser] = useState(null);
+  const [activeTab, setActiveTab] = useState('dashboard');
+  
+  // Estados para dados (Agora inicializados vazios, preenchidos pelo Firestore)
+  const [clients, setClients] = useState([]);
+  const [purchases, setPurchases] = useState([]);
+  const [subscriptions, setSubscriptions] = useState([]);
+  const [withdrawals, setWithdrawals] = useState([]);
+
+  // Modais
+  const [isClientModalOpen, setIsClientModalOpen] = useState(false);
+  const [isPurchaseModalOpen, setIsPurchaseModalOpen] = useState(false);
+  const [isSubModalOpen, setIsSubModalOpen] = useState(false);
+  const [isWithdrawalModalOpen, setIsWithdrawalModalOpen] = useState(false);
+
+  // Estado para Edição (ID do item sendo editado)
+  const [editingId, setEditingId] = useState(null);
+
+  // Estados de formulários (Valores Iniciais)
+  const initialClientState = { name: '', segment: '', works: '', charged: '', received: '', status: 'Negociação' };
+  const initialPurchaseState = { item: '', price: '', installments: '1', category: 'Equipamento' };
+  const initialSubState = { name: '', price: '' };
+  const initialWithdrawalState = { name: '', amount: '', description: '' };
+
+  const [newClient, setNewClient] = useState(initialClientState);
+  const [newPurchase, setNewPurchase] = useState(initialPurchaseState);
+  const [newSub, setNewSub] = useState(initialSubState);
+  const [newWithdrawal, setNewWithdrawal] = useState(initialWithdrawalState);
+
+  // --- EFEITO 1: Autenticação ---
+  useEffect(() => {
+    const initAuth = async () => {
+      if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
+        await signInWithCustomToken(auth, __initial_auth_token);
+      } else {
+        await signInAnonymously(auth);
+      }
+    };
+    initAuth();
+    const unsubscribe = onAuthStateChanged(auth, setUser);
+    return () => unsubscribe();
+  }, []);
+
+  // --- EFEITO 2: Sincronização com Firestore ---
+  useEffect(() => {
+    if (!user) return;
+
+    // Função auxiliar para criar listener
+    const createListener = (collectionName, setter) => {
+      const q = collection(db, 'artifacts', appId, 'public', 'data', collectionName);
+      return onSnapshot(q, (snapshot) => {
+        const data = snapshot.docs.map(doc => ({
+          id: doc.id,
+          ...doc.data()
+        }));
+        setter(data);
+      }, (error) => console.error(`Erro ao buscar ${collectionName}:`, error));
+    };
+
+    const unsubscribeClients = createListener('clients', setClients);
+    const unsubscribePurchases = createListener('purchases', setPurchases);
+    const unsubscribeSubs = createListener('subscriptions', setSubscriptions);
+    const unsubscribeWithdrawals = createListener('withdrawals', setWithdrawals);
+
+    return () => {
+      unsubscribeClients();
+      unsubscribePurchases();
+      unsubscribeSubs();
+      unsubscribeWithdrawals();
+    };
+  }, [user]);
+
+  // Formatador de Moeda
+  const formatBRL = (value) => {
+    return new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(value || 0);
+  };
+
+  // --- Funções de Reset ---
+  const resetModals = () => {
+    setEditingId(null);
+    setNewClient(initialClientState);
+    setNewPurchase(initialPurchaseState);
+    setNewSub(initialSubState);
+    setNewWithdrawal(initialWithdrawalState);
+    setIsClientModalOpen(false);
+    setIsPurchaseModalOpen(false);
+    setIsSubModalOpen(false);
+    setIsWithdrawalModalOpen(false);
+  };
+
+  // --- Funções CRUD (Firebase) ---
+  
+  // CLIENTES
+  const handleSaveClient = async () => {
+    if (!user) return;
+    const colRef = collection(db, 'artifacts', appId, 'public', 'data', 'clients');
+    const payload = { ...newClient, charged: Number(newClient.charged), received: Number(newClient.received) };
+    
+    try {
+      if (editingId) {
+        await updateDoc(doc(colRef, editingId), payload);
+      } else {
+        await addDoc(colRef, { ...payload, createdAt: Date.now() });
+      }
+      resetModals();
+    } catch (e) {
+      console.error("Erro ao salvar cliente:", e);
+    }
+  };
+
+  const handleEditClient = (client) => {
+    setNewClient(client);
+    setEditingId(client.id);
+    setIsClientModalOpen(true);
+  };
+
+  // COMPRAS
+  const handleSavePurchase = async () => {
+    if (!user) return;
+    const colRef = collection(db, 'artifacts', appId, 'public', 'data', 'purchases');
+    const payload = { ...newPurchase, price: Number(newPurchase.price) };
+
+    try {
+      if (editingId) {
+        await updateDoc(doc(colRef, editingId), payload);
+      } else {
+        await addDoc(colRef, { ...payload, createdAt: Date.now() });
+      }
+      resetModals();
+    } catch (e) {
+      console.error("Erro ao salvar compra:", e);
+    }
+  };
+
+  const handleEditPurchase = (item) => {
+    setNewPurchase(item);
+    setEditingId(item.id);
+    setIsPurchaseModalOpen(true);
+  };
+
+  // ASSINATURAS
+  const handleSaveSub = async () => {
+    if (!user) return;
+    const colRef = collection(db, 'artifacts', appId, 'public', 'data', 'subscriptions');
+    const payload = { ...newSub, price: Number(newSub.price) };
+
+    try {
+      if (editingId) {
+        await updateDoc(doc(colRef, editingId), payload);
+      } else {
+        await addDoc(colRef, { ...payload, createdAt: Date.now() });
+      }
+      resetModals();
+    } catch (e) {
+      console.error("Erro ao salvar assinatura:", e);
+    }
+  };
+
+  const handleEditSub = (item) => {
+    setNewSub(item);
+    setEditingId(item.id);
+    setIsSubModalOpen(true);
+  };
+
+  // RETIRADAS
+  const handleSaveWithdrawal = async () => {
+    if (!user) return;
+    const colRef = collection(db, 'artifacts', appId, 'public', 'data', 'withdrawals');
+    const payload = { ...newWithdrawal, amount: Number(newWithdrawal.amount), date: newWithdrawal.date || new Date().toLocaleDateString() };
+
+    try {
+      if (editingId) {
+        await updateDoc(doc(colRef, editingId), payload);
+      } else {
+        await addDoc(colRef, { ...payload, date: new Date().toLocaleDateString(), createdAt: Date.now() });
+      }
+      resetModals();
+    } catch (e) {
+      console.error("Erro ao salvar retirada:", e);
+    }
+  };
+
+  const handleEditWithdrawal = (item) => {
+    setNewWithdrawal(item);
+    setEditingId(item.id);
+    setIsWithdrawalModalOpen(true);
+  };
+
+  // --- Funções de Remoção (Genérica) ---
+  const deleteItem = async (collectionName, id) => {
+    if(confirm('Tem certeza que deseja excluir este item permanentemente?')) {
+      try {
+        await deleteDoc(doc(db, 'artifacts', appId, 'public', 'data', collectionName, id));
+      } catch (e) {
+        console.error("Erro ao deletar:", e);
+      }
+    }
+  };
+
+  // --- Cálculos Financeiros ---
+  const totalReceived = clients.reduce((acc, client) => acc + (client.received || 0), 0);
+  const totalProjected = clients.reduce((acc, client) => acc + (client.charged || 0), 0);
+  const totalPurchases = purchases.reduce((acc, item) => acc + (item.price || 0), 0);
+  const totalSubscriptionsMonthly = subscriptions.reduce((acc, item) => acc + (item.price || 0), 0);
+  const totalWithdrawals = withdrawals.reduce((acc, item) => acc + (item.amount || 0), 0);
+  
+  const totalExpenses = totalPurchases + totalWithdrawals + totalSubscriptionsMonthly;
+  const netProfit = totalReceived - totalExpenses;
+
+  // --- Renderização ---
+
+  const renderDashboard = () => (
+    <div className="space-y-6 animate-in fade-in">
+      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
+        <Card 
+          title="Faturamento (Recebido)" 
+          value={formatBRL(totalReceived)} 
+          subtext={`De um total de ${formatBRL(totalProjected)} projetado`}
+          icon={TrendingUp}
+          trend="up"
+        />
+        <Card 
+          title="Despesas Totais" 
+          value={formatBRL(totalExpenses)} 
+          subtext="Compras, Assinaturas (mês) e Equipe"
+          icon={ShoppingBag}
+          trend="down"
+        />
+        <Card 
+          title="Lucro da Empresa" 
+          value={formatBRL(netProfit)} 
+          subtext={netProfit > 0 ? "Saldo Positivo" : "Atenção ao fluxo"}
+          icon={Wallet}
+          trend={netProfit >= 0 ? "up" : "down"}
+        />
+        <Card 
+          title="Custo Fixo Mensal" 
+          value={formatBRL(totalSubscriptionsMonthly)} 
+          subtext={`${subscriptions.length} assinaturas ativas`}
+          icon={CreditCard}
+        />
+      </div>
+
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+        <div className="bg-white p-6 rounded-xl border border-gray-100 shadow-sm">
+          <h3 className="text-lg font-bold text-gray-900 mb-4 flex items-center gap-2">
+            <CheckCircle size={20} className="text-black" /> Projetos Recentes
+          </h3>
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm text-left">
+              <thead className="text-xs text-gray-500 uppercase bg-gray-50">
+                <tr>
+                  <th className="px-4 py-3">Cliente</th>
+                  <th className="px-4 py-3">Valor</th>
+                  <th className="px-4 py-3">Status</th>
+                </tr>
+              </thead>
+              <tbody>
+                {clients.slice(-5).reverse().map(client => (
+                  <tr key={client.id} className="border-b last:border-0 hover:bg-gray-50">
+                    <td className="px-4 py-3 font-medium text-gray-900">{client.name}</td>
+                    <td className="px-4 py-3 text-gray-600">{formatBRL(client.received)}</td>
+                    <td className="px-4 py-3"><StatusBadge status={client.status} /></td>
+                  </tr>
+                ))}
+                {clients.length === 0 && <tr><td colSpan="3" className="px-4 py-3 text-center text-gray-400">Nenhum projeto ainda.</td></tr>}
+              </tbody>
+            </table>
+          </div>
+        </div>
+
+        <div className="bg-white p-6 rounded-xl border border-gray-100 shadow-sm">
+          <h3 className="text-lg font-bold text-gray-900 mb-4 flex items-center gap-2">
+             Resumo Financeiro
+          </h3>
+          <div className="space-y-4">
+            <div className="flex justify-between items-center p-3 bg-gray-50 rounded-lg">
+              <span className="text-gray-600">Total em Compras (Equip/Soft)</span>
+              <span className="font-semibold text-gray-900">{formatBRL(totalPurchases)}</span>
+            </div>
+            <div className="flex justify-between items-center p-3 bg-gray-50 rounded-lg">
+              <span className="text-gray-600">Retiradas da Equipe</span>
+              <span className="font-semibold text-gray-900">{formatBRL(totalWithdrawals)}</span>
+            </div>
+            <div className="h-px bg-gray-200 my-2"></div>
+            <div className="flex justify-between items-center p-3 bg-black text-white rounded-lg shadow-lg">
+              <span className="font-medium">Caixa Líquido Disponível</span>
+              <span className="font-bold text-xl">{formatBRL(netProfit)}</span>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+
+  return (
+    <div className="flex h-screen bg-gray-50 text-gray-900 font-sans selection:bg-black selection:text-white">
+      {/* Sidebar */}
+      <aside className="w-64 bg-black text-white flex flex-col shadow-2xl z-20">
+        <div className="p-6 border-b border-gray-800 flex flex-col items-center">
+          {/* Logo Placeholder logic */}
+          <div className="mb-2">
+             <img src="1.png" alt="Otimiza Logo" className="h-10 object-contain invert" onError={(e) => e.target.style.display='none'} />
+             <div className="text-2xl font-bold tracking-tighter flex items-center gap-1">
+                Otimiza<Play className="fill-white" size={20}/>
+             </div>
+          </div>
+          <p className="text-xs text-gray-500 uppercase tracking-widest mt-1">Produtora de Vídeo</p>
+        </div>
+        
+        <nav className="flex-1 p-4 space-y-2">
+          {[
+            { id: 'dashboard', label: 'Dashboard', icon: LayoutDashboard },
+            { id: 'clients', label: 'Projetos / CRM', icon: Users },
+            { id: 'purchases', label: 'Compras', icon: ShoppingBag },
+            { id: 'subscriptions', label: 'Assinaturas', icon: CreditCard },
+            { id: 'team', label: 'Retiradas', icon: Wallet },
+          ].map(item => (
+            <button
+              key={item.id}
+              onClick={() => setActiveTab(item.id)}
+              className={`w-full flex items-center gap-3 px-4 py-3 rounded-lg text-sm font-medium transition-all ${
+                activeTab === item.id 
+                  ? 'bg-white text-black shadow-lg translate-x-1' 
+                  : 'text-gray-400 hover:text-white hover:bg-gray-900'
+              }`}
+            >
+              <item.icon size={18} />
+              {item.label}
+            </button>
+          ))}
+        </nav>
+
+        <div className="p-4 border-t border-gray-800">
+          <div className="bg-gray-900 rounded-lg p-3 text-center">
+            <p className="text-xs text-gray-500 mb-1">Status do Caixa</p>
+            <p className={`font-bold ${netProfit >= 0 ? 'text-green-400' : 'text-red-400'}`}>
+              {netProfit >= 0 ? 'Positivo' : 'Negativo'}
+            </p>
+            {!user && <p className="text-xs text-yellow-500 mt-2">Conectando...</p>}
+          </div>
+        </div>
+      </aside>
+
+      {/* Main Content */}
+      <main className="flex-1 overflow-auto">
+        <header className="bg-white border-b border-gray-200 px-8 py-5 flex justify-between items-center sticky top-0 z-10">
+          <h1 className="text-2xl font-bold text-gray-900 capitalize">
+            {activeTab === 'dashboard' ? 'Visão Geral' : 
+             activeTab === 'clients' ? 'Gestão de Clientes' : 
+             activeTab === 'purchases' ? 'Compras & Equipamentos' :
+             activeTab === 'subscriptions' ? 'Assinaturas Mensais' : 'Retiradas & Equipe'}
+          </h1>
+          <div className="flex items-center gap-4">
+            <span className="text-sm text-gray-500">{new Date().toLocaleDateString('pt-BR', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' })}</span>
+          </div>
+        </header>
+
+        <div className="p-8 max-w-7xl mx-auto">
+          {activeTab === 'dashboard' && renderDashboard()}
+
+          {activeTab === 'clients' && (
+            <div className="space-y-6 animate-in slide-in-from-bottom-4">
+              <div className="flex justify-end">
+                <Button onClick={() => setIsClientModalOpen(true)}>
+                  <Plus size={18} /> Novo Projeto
+                </Button>
+              </div>
+              <div className="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden">
+                <table className="w-full text-left border-collapse">
+                  <thead className="bg-gray-50 text-gray-500 text-xs uppercase font-semibold">
+                    <tr>
+                      <th className="p-4">Cliente / Segmento</th>
+                      <th className="p-4">Trabalhos Realizados</th>
+                      <th className="p-4">Status</th>
+                      <th className="p-4 text-right">Valor Cobrado</th>
+                      <th className="p-4 text-right">Recebido</th>
+                      <th className="p-4 text-center">Ações</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-gray-100 text-sm">
+                    {clients.map(client => (
+                      <tr key={client.id} className="hover:bg-gray-50 transition-colors">
+                        <td className="p-4">
+                          <p className="font-bold text-gray-900">{client.name}</p>
+                          <p className="text-xs text-gray-500">{client.segment}</p>
+                        </td>
+                        <td className="p-4 text-gray-600 max-w-xs truncate">{client.works}</td>
+                        <td className="p-4"><StatusBadge status={client.status} /></td>
+                        <td className="p-4 text-right font-medium text-gray-900">{formatBRL(client.charged)}</td>
+                        <td className="p-4 text-right font-medium text-green-600">{formatBRL(client.received)}</td>
+                        <td className="p-4 text-center">
+                          <div className="flex items-center justify-center gap-2">
+                             <button onClick={() => handleEditClient(client)} className="text-gray-400 hover:text-blue-600 p-2"><Edit2 size={16}/></button>
+                             <button onClick={() => deleteItem('clients', client.id)} className="text-gray-400 hover:text-red-600 p-2"><Trash2 size={16}/></button>
+                          </div>
+                        </td>
+                      </tr>
+                    ))}
+                    {clients.length === 0 && <tr><td colSpan="6" className="p-8 text-center text-gray-400">Nenhum projeto cadastrado. Adicione o primeiro!</td></tr>}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          )}
+
+          {activeTab === 'purchases' && (
+             <div className="space-y-6 animate-in slide-in-from-bottom-4">
+             <div className="flex justify-end">
+               <Button onClick={() => setIsPurchaseModalOpen(true)}>
+                 <Plus size={18} /> Nova Compra
+               </Button>
+             </div>
+             <div className="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden">
+               <table className="w-full text-left border-collapse">
+                 <thead className="bg-gray-50 text-gray-500 text-xs uppercase font-semibold">
+                   <tr>
+                     <th className="p-4">Item / Software</th>
+                     <th className="p-4">Categoria</th>
+                     <th className="p-4 text-center">Parcelas</th>
+                     <th className="p-4 text-right">Preço Total</th>
+                     <th className="p-4 text-center">Ações</th>
+                   </tr>
+                 </thead>
+                 <tbody className="divide-y divide-gray-100 text-sm">
+                   {purchases.map(item => (
+                     <tr key={item.id} className="hover:bg-gray-50">
+                       <td className="p-4 font-medium text-gray-900">{item.item}</td>
+                       <td className="p-4">
+                        <span className="bg-gray-100 text-gray-600 px-2 py-1 rounded text-xs">{item.category}</span>
+                       </td>
+                       <td className="p-4 text-center text-gray-600">{item.installments}x</td>
+                       <td className="p-4 text-right font-medium text-red-600">-{formatBRL(item.price)}</td>
+                       <td className="p-4 text-center">
+                         <div className="flex items-center justify-center gap-2">
+                            <button onClick={() => handleEditPurchase(item)} className="text-gray-400 hover:text-blue-600 p-2"><Edit2 size={16}/></button>
+                            <button onClick={() => deleteItem('purchases', item.id)} className="text-gray-400 hover:text-red-600 p-2"><Trash2 size={16}/></button>
+                         </div>
+                       </td>
+                     </tr>
+                   ))}
+                   {purchases.length === 0 && <tr><td colSpan="5" className="p-8 text-center text-gray-400">Nenhuma compra registrada.</td></tr>}
+                 </tbody>
+               </table>
+             </div>
+           </div>
+          )}
+
+          {activeTab === 'subscriptions' && (
+            <div className="space-y-6 animate-in slide-in-from-bottom-4">
+              <div className="flex justify-between items-center bg-blue-50 p-4 rounded-lg border border-blue-100 text-blue-800">
+                 <div className="flex items-center gap-2">
+                    <CreditCard size={20}/>
+                    <span className="font-semibold">Custo Recorrente Mensal: {formatBRL(totalSubscriptionsMonthly)}</span>
+                 </div>
+                 <Button onClick={() => setIsSubModalOpen(true)} variant="primary">
+                   <Plus size={18} /> Adicionar Assinatura
+                 </Button>
+              </div>
+
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                  {subscriptions.map(sub => (
+                    <div key={sub.id} className="bg-white p-4 rounded-xl border border-gray-200 shadow-sm flex justify-between items-center group hover:shadow-md transition-all">
+                        <div>
+                           <h4 className="font-bold text-gray-900">{sub.name}</h4>
+                           <p className="text-gray-500 text-sm">Cobrança Mensal</p>
+                        </div>
+                        <div className="text-right">
+                           <p className="font-bold text-red-600">-{formatBRL(sub.price)}</p>
+                           <div className="flex justify-end gap-2 mt-2 opacity-0 group-hover:opacity-100 transition-opacity">
+                              <button onClick={() => handleEditSub(sub)} className="text-xs bg-gray-100 text-gray-600 hover:text-blue-600 px-2 py-1 rounded">Editar</button>
+                              <button onClick={() => deleteItem('subscriptions', sub.id)} className="text-xs bg-red-50 text-red-600 hover:bg-red-100 px-2 py-1 rounded">Excluir</button>
+                           </div>
+                        </div>
+                    </div>
+                  ))}
+                   {subscriptions.length === 0 && <div className="col-span-3 text-center text-gray-400 py-8">Nenhuma assinatura ativa.</div>}
+              </div>
+            </div>
+          )}
+
+          {activeTab === 'team' && (
+             <div className="space-y-6 animate-in slide-in-from-bottom-4">
+             <div className="flex justify-end">
+               <Button onClick={() => setIsWithdrawalModalOpen(true)}>
+                 <Plus size={18} /> Nova Retirada
+               </Button>
+             </div>
+             <div className="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden">
+               <table className="w-full text-left border-collapse">
+                 <thead className="bg-gray-50 text-gray-500 text-xs uppercase font-semibold">
+                   <tr>
+                     <th className="p-4">Data</th>
+                     <th className="p-4">Destinatário</th>
+                     <th className="p-4">Descrição</th>
+                     <th className="p-4 text-right">Valor</th>
+                     <th className="p-4 text-center">Ações</th>
+                   </tr>
+                 </thead>
+                 <tbody className="divide-y divide-gray-100 text-sm">
+                   {withdrawals.map(w => (
+                     <tr key={w.id} className="hover:bg-gray-50">
+                       <td className="p-4 text-gray-500">{w.date}</td>
+                       <td className="p-4 font-bold text-gray-900">{w.name}</td>
+                       <td className="p-4 text-gray-600">{w.description}</td>
+                       <td className="p-4 text-right font-medium text-red-600">-{formatBRL(w.amount)}</td>
+                       <td className="p-4 text-center">
+                         <div className="flex items-center justify-center gap-2">
+                            <button onClick={() => handleEditWithdrawal(w)} className="text-gray-400 hover:text-blue-600 p-2"><Edit2 size={16}/></button>
+                            <button onClick={() => deleteItem('withdrawals', w.id)} className="text-gray-400 hover:text-red-600 p-2"><Trash2 size={16}/></button>
+                         </div>
+                       </td>
+                     </tr>
+                   ))}
+                    {withdrawals.length === 0 && <tr><td colSpan="5" className="p-8 text-center text-gray-400">Nenhuma retirada registrada.</td></tr>}
+                 </tbody>
+               </table>
+             </div>
+           </div>
+          )}
+        </div>
+      </main>
+
+      {/* --- MODAIS --- */}
+
+      {/* Modal Cliente */}
+      <Modal isOpen={isClientModalOpen} onClose={resetModals} title={editingId ? "Editar Projeto" : "Novo Projeto"}>
+        <div className="space-y-4">
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">Nome do Cliente</label>
+            <input 
+              type="text" 
+              className="w-full border border-gray-300 rounded-lg p-2 focus:ring-2 focus:ring-black focus:outline-none"
+              value={newClient.name}
+              onChange={e => setNewClient({...newClient, name: e.target.value})}
+            />
+          </div>
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">Segmento</label>
+            <input 
+              type="text" 
+              placeholder="Ex: Varejo, Institucional, Moda"
+              className="w-full border border-gray-300 rounded-lg p-2 focus:ring-2 focus:ring-black focus:outline-none"
+              value={newClient.segment}
+              onChange={e => setNewClient({...newClient, segment: e.target.value})}
+            />
+          </div>
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">Trabalhos Realizados</label>
+            <textarea 
+              placeholder="Ex: Vídeo Reels, Cobertura de Evento..."
+              className="w-full border border-gray-300 rounded-lg p-2 focus:ring-2 focus:ring-black focus:outline-none"
+              value={newClient.works}
+              onChange={e => setNewClient({...newClient, works: e.target.value})}
+            />
+          </div>
+          <div className="grid grid-cols-2 gap-4">
+             <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Valor Cobrado (R$)</label>
+                <input 
+                  type="number" 
+                  className="w-full border border-gray-300 rounded-lg p-2 focus:ring-2 focus:ring-black focus:outline-none"
+                  value={newClient.charged}
+                  onChange={e => setNewClient({...newClient, charged: e.target.value})}
+                />
+             </div>
+             <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Valor Recebido (R$)</label>
+                <input 
+                  type="number" 
+                  className="w-full border border-gray-300 rounded-lg p-2 focus:ring-2 focus:ring-black focus:outline-none"
+                  value={newClient.received}
+                  onChange={e => setNewClient({...newClient, received: e.target.value})}
+                />
+             </div>
+          </div>
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">Status</label>
+            <select 
+              className="w-full border border-gray-300 rounded-lg p-2 focus:ring-2 focus:ring-black focus:outline-none"
+              value={newClient.status}
+              onChange={e => setNewClient({...newClient, status: e.target.value})}
+            >
+              <option value="Negociação">Negociação</option>
+              <option value="Em Processo">Em Processo</option>
+              <option value="Concluído">Concluído</option>
+            </select>
+          </div>
+          <div className="pt-4 flex justify-end gap-2">
+            <Button variant="outline" onClick={resetModals}>Cancelar</Button>
+            <Button onClick={handleSaveClient}>{editingId ? "Atualizar" : "Salvar Projeto"}</Button>
+          </div>
+        </div>
+      </Modal>
+
+      {/* Modal Compras */}
+      <Modal isOpen={isPurchaseModalOpen} onClose={resetModals} title={editingId ? "Editar Compra" : "Registrar Compra"}>
+        <div className="space-y-4">
+           <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">Item Comprado</label>
+            <input 
+              type="text" 
+              placeholder="Ex: Câmera Sony A7III, Adobe Premiere"
+              className="w-full border border-gray-300 rounded-lg p-2 focus:ring-2 focus:ring-black focus:outline-none"
+              value={newPurchase.item}
+              onChange={e => setNewPurchase({...newPurchase, item: e.target.value})}
+            />
+          </div>
+          <div className="grid grid-cols-2 gap-4">
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Preço Total (R$)</label>
+              <input 
+                type="number" 
+                className="w-full border border-gray-300 rounded-lg p-2 focus:ring-2 focus:ring-black focus:outline-none"
+                value={newPurchase.price}
+                onChange={e => setNewPurchase({...newPurchase, price: e.target.value})}
+              />
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Parcelas</label>
+              <input 
+                type="number" 
+                min="1"
+                className="w-full border border-gray-300 rounded-lg p-2 focus:ring-2 focus:ring-black focus:outline-none"
+                value={newPurchase.installments}
+                onChange={e => setNewPurchase({...newPurchase, installments: e.target.value})}
+              />
+            </div>
+          </div>
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">Categoria</label>
+             <select 
+              className="w-full border border-gray-300 rounded-lg p-2 focus:ring-2 focus:ring-black focus:outline-none"
+              value={newPurchase.category}
+              onChange={e => setNewPurchase({...newPurchase, category: e.target.value})}
+            >
+              <option value="Equipamento">Equipamento</option>
+              <option value="Software">Software</option>
+              <option value="Outros">Outros</option>
+            </select>
+          </div>
+          <div className="pt-4 flex justify-end gap-2">
+            <Button variant="outline" onClick={resetModals}>Cancelar</Button>
+            <Button onClick={handleSavePurchase}>{editingId ? "Atualizar" : "Registrar"}</Button>
+          </div>
+        </div>
+      </Modal>
+
+       {/* Modal Assinaturas */}
+      <Modal isOpen={isSubModalOpen} onClose={resetModals} title={editingId ? "Editar Assinatura" : "Nova Assinatura"}>
+        <div className="space-y-4">
+           <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">Serviço</label>
+            <input 
+              type="text" 
+              placeholder="Ex: Adobe Creative Cloud, Artlist"
+              className="w-full border border-gray-300 rounded-lg p-2 focus:ring-2 focus:ring-black focus:outline-none"
+              value={newSub.name}
+              onChange={e => setNewSub({...newSub, name: e.target.value})}
+            />
+          </div>
+          <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Valor Mensal (R$)</label>
+              <input 
+                type="number" 
+                className="w-full border border-gray-300 rounded-lg p-2 focus:ring-2 focus:ring-black focus:outline-none"
+                value={newSub.price}
+                onChange={e => setNewSub({...newSub, price: e.target.value})}
+              />
+            </div>
+          <div className="pt-4 flex justify-end gap-2">
+            <Button variant="outline" onClick={resetModals}>Cancelar</Button>
+            <Button onClick={handleSaveSub}>{editingId ? "Atualizar" : "Ativar Assinatura"}</Button>
+          </div>
+        </div>
+      </Modal>
+
+      {/* Modal Retirada */}
+      <Modal isOpen={isWithdrawalModalOpen} onClose={resetModals} title={editingId ? "Editar Retirada" : "Nova Retirada"}>
+        <div className="space-y-4">
+           <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">Nome do Recebedor</label>
+            <input 
+              type="text" 
+              placeholder="Ex: João (Sócio), Maria (Freelancer)"
+              className="w-full border border-gray-300 rounded-lg p-2 focus:ring-2 focus:ring-black focus:outline-none"
+              value={newWithdrawal.name}
+              onChange={e => setNewWithdrawal({...newWithdrawal, name: e.target.value})}
+            />
+          </div>
+          <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Valor (R$)</label>
+              <input 
+                type="number" 
+                className="w-full border border-gray-300 rounded-lg p-2 focus:ring-2 focus:ring-black focus:outline-none"
+                value={newWithdrawal.amount}
+                onChange={e => setNewWithdrawal({...newWithdrawal, amount: e.target.value})}
+              />
+            </div>
+            <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">Descrição</label>
+            <input 
+              type="text" 
+              placeholder="Ex: Pro-labore mês 10"
+              className="w-full border border-gray-300 rounded-lg p-2 focus:ring-2 focus:ring-black focus:outline-none"
+              value={newWithdrawal.description}
+              onChange={e => setNewWithdrawal({...newWithdrawal, description: e.target.value})}
+            />
+          </div>
+          <div className="pt-4 flex justify-end gap-2">
+            <Button variant="outline" onClick={resetModals}>Cancelar</Button>
+            <Button onClick={handleSaveWithdrawal}>{editingId ? "Atualizar" : "Confirmar Retirada"}</Button>
+          </div>
+        </div>
+      </Modal>
+    </div>
+  );
+}
