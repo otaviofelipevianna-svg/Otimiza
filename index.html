@@ -22,42 +22,16 @@
 
     <!-- 4. Seu Aplicativo -->
     <script type="text/babel" data-type="module">
-        // Importações UNIFICADAS via ESM
+        // Importações (Versão ESM para evitar erros)
         import React, { useState, useEffect } from 'https://esm.sh/react@18.2.0';
         import { createRoot } from 'https://esm.sh/react-dom@18.2.0/client';
         import { 
             LayoutDashboard, Users, ShoppingBag, CreditCard, Wallet, 
             Plus, Trash2, Edit2, TrendingUp, CheckCircle, Clock, 
-            MessageCircle, Play, AlertTriangle 
+            MessageCircle, Play 
         } from 'https://esm.sh/lucide-react@0.292.0';
-        
-        // Importações do Firebase
-        import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js";
-        import { 
-            getFirestore, collection, addDoc, updateDoc, deleteDoc, doc, onSnapshot 
-        } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
-        import { 
-            getAuth, signInAnonymously, onAuthStateChanged 
-        } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-auth.js";
 
-        // --- SUA CONFIGURAÇÃO DO FIREBASE ---
-        const firebaseConfig = {
-            apiKey: "AIzaSyDQ8ggMxe09e6qf92B-1lv3A6gCP-J33Js",
-            authDomain: "otimiza-9e42f.firebaseapp.com",
-            projectId: "otimiza-9e42f",
-            storageBucket: "otimiza-9e42f.firebasestorage.app",
-            messagingSenderId: "482070105168",
-            appId: "1:482070105168:web:cf8aae2f888946f196d555",
-            measurementId: "G-HNWMPJ468D"
-        };
-
-        // Inicializar Firebase
-        const app = initializeApp(firebaseConfig);
-        const auth = getAuth(app);
-        const db = getFirestore(app);
-        const appId = 'otimiza-crm-web'; // ID fixo para web
-
-        // --- Componentes ---
+        // --- Componentes Visuais ---
         const Card = ({ title, value, subtext, icon: Icon, trend }) => (
             <div className="bg-white p-6 rounded-xl border border-gray-100 shadow-sm hover:shadow-md transition-shadow">
                 <div className="flex justify-between items-start">
@@ -112,13 +86,11 @@
                 'Concluído': 'bg-green-50 text-green-600 border-green-100'
             };
             
-            const icons = {
+            const Icon = {
                 'Negociação': MessageCircle,
                 'Em Processo': Clock,
                 'Concluído': CheckCircle
-            };
-
-            const Icon = icons[status] || MessageCircle;
+            }[status] || MessageCircle;
 
             return (
                 <span className={`px-3 py-1 rounded-full text-xs font-semibold border flex items-center gap-1 w-fit ${styles[status] || styles['Negociação']}`}>
@@ -130,15 +102,21 @@
 
         // --- APP PRINCIPAL ---
         function App() {
-            const [user, setUser] = useState(null);
-            const [authError, setAuthError] = useState(null); // Estado para erro de auth
             const [activeTab, setActiveTab] = useState('dashboard');
             
-            // Dados
-            const [clients, setClients] = useState([]);
-            const [purchases, setPurchases] = useState([]);
-            const [subscriptions, setSubscriptions] = useState([]);
-            const [withdrawals, setWithdrawals] = useState([]);
+            // --- ESTADO COM PERSISTÊNCIA LOCAL ---
+            // Ao iniciar, tenta ler do localStorage. Se não tiver nada, inicia vazio [].
+            const [clients, setClients] = useState(() => JSON.parse(localStorage.getItem('otimiza_clients')) || []);
+            const [purchases, setPurchases] = useState(() => JSON.parse(localStorage.getItem('otimiza_purchases')) || []);
+            const [subscriptions, setSubscriptions] = useState(() => JSON.parse(localStorage.getItem('otimiza_subscriptions')) || []);
+            const [withdrawals, setWithdrawals] = useState(() => JSON.parse(localStorage.getItem('otimiza_withdrawals')) || []);
+
+            // --- SALVAMENTO AUTOMÁTICO ---
+            // Sempre que os dados mudam, salva no navegador.
+            useEffect(() => localStorage.setItem('otimiza_clients', JSON.stringify(clients)), [clients]);
+            useEffect(() => localStorage.setItem('otimiza_purchases', JSON.stringify(purchases)), [purchases]);
+            useEffect(() => localStorage.setItem('otimiza_subscriptions', JSON.stringify(subscriptions)), [subscriptions]);
+            useEffect(() => localStorage.setItem('otimiza_withdrawals', JSON.stringify(withdrawals)), [withdrawals]);
 
             // Modais
             const [isClientModalOpen, setIsClientModalOpen] = useState(false);
@@ -149,7 +127,7 @@
             // Edição
             const [editingId, setEditingId] = useState(null);
 
-            // Forms
+            // Formulários (Estados Iniciais)
             const initialClientState = { name: '', segment: '', works: '', charged: '', received: '', status: 'Negociação' };
             const initialPurchaseState = { item: '', price: '', installments: '1', category: 'Equipamento' };
             const initialSubState = { name: '', price: '' };
@@ -159,46 +137,6 @@
             const [newPurchase, setNewPurchase] = useState(initialPurchaseState);
             const [newSub, setNewSub] = useState(initialSubState);
             const [newWithdrawal, setNewWithdrawal] = useState(initialWithdrawalState);
-
-            // Auth
-            useEffect(() => {
-                signInAnonymously(auth).catch((error) => {
-                    console.error("Erro de Autenticação:", error);
-                    let msg = "Erro desconhecido ao conectar.";
-                    if (error.code === 'auth/configuration-not-found' || error.code === 'auth/admin-restricted-operation') {
-                        msg = "A Autenticação Anônima não está ativada no Firebase Console.";
-                    } else if (error.code === 'auth/api-key-not-valid') {
-                        msg = "A API Key do Firebase é inválida.";
-                    }
-                    setAuthError(msg);
-                });
-                return onAuthStateChanged(auth, setUser);
-            }, []);
-
-            // Firestore Listeners
-            useEffect(() => {
-                if (!user) return;
-
-                const createListener = (collectionName, setter) => {
-                    const q = collection(db, 'artifacts', appId, 'public', 'data', collectionName);
-                    return onSnapshot(q, (snapshot) => {
-                        const data = snapshot.docs.map(doc => ({
-                            id: doc.id,
-                            ...doc.data()
-                        }));
-                        setter(data);
-                    }, (error) => console.error(`Erro ${collectionName}:`, error));
-                };
-
-                const unsubClients = createListener('clients', setClients);
-                const unsubPurchases = createListener('purchases', setPurchases);
-                const unsubSubs = createListener('subscriptions', setSubscriptions);
-                const unsubWithdrawals = createListener('withdrawals', setWithdrawals);
-
-                return () => {
-                    unsubClients(); unsubPurchases(); unsubSubs(); unsubWithdrawals();
-                };
-            }, [user]);
 
             const formatBRL = (value) => new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(value || 0);
 
@@ -214,57 +152,62 @@
                 setIsWithdrawalModalOpen(false);
             };
 
-            // --- Handlers ---
-            const handleSaveClient = async () => {
-                if (!user) return;
-                const colRef = collection(db, 'artifacts', appId, 'public', 'data', 'clients');
+            // --- Handlers (Lógica de Salvar) ---
+            
+            const handleSaveClient = () => {
                 const payload = { ...newClient, charged: Number(newClient.charged), received: Number(newClient.received) };
-                try {
-                    editingId ? await updateDoc(doc(colRef, editingId), payload) : await addDoc(colRef, { ...payload, createdAt: Date.now() });
-                    resetModals();
-                } catch (e) { console.error(e); alert('Erro ao salvar. Verifique permissões.'); }
+                if (editingId) {
+                    setClients(clients.map(i => i.id === editingId ? { ...payload, id: editingId } : i));
+                } else {
+                    setClients([...clients, { ...payload, id: Date.now() }]);
+                }
+                resetModals();
             };
 
-            const handleSavePurchase = async () => {
-                const colRef = collection(db, 'artifacts', appId, 'public', 'data', 'purchases');
+            const handleSavePurchase = () => {
                 const payload = { ...newPurchase, price: Number(newPurchase.price) };
-                try {
-                    editingId ? await updateDoc(doc(colRef, editingId), payload) : await addDoc(colRef, { ...payload, createdAt: Date.now() });
-                    resetModals();
-                } catch (e) { console.error(e); }
+                if (editingId) {
+                    setPurchases(purchases.map(i => i.id === editingId ? { ...payload, id: editingId } : i));
+                } else {
+                    setPurchases([...purchases, { ...payload, id: Date.now() }]);
+                }
+                resetModals();
             };
 
-            const handleSaveSub = async () => {
-                const colRef = collection(db, 'artifacts', appId, 'public', 'data', 'subscriptions');
+            const handleSaveSub = () => {
                 const payload = { ...newSub, price: Number(newSub.price) };
-                try {
-                    editingId ? await updateDoc(doc(colRef, editingId), payload) : await addDoc(colRef, { ...payload, createdAt: Date.now() });
-                    resetModals();
-                } catch (e) { console.error(e); }
+                if (editingId) {
+                    setSubscriptions(subscriptions.map(i => i.id === editingId ? { ...payload, id: editingId } : i));
+                } else {
+                    setSubscriptions([...subscriptions, { ...payload, id: Date.now() }]);
+                }
+                resetModals();
             };
 
-            const handleSaveWithdrawal = async () => {
-                const colRef = collection(db, 'artifacts', appId, 'public', 'data', 'withdrawals');
+            const handleSaveWithdrawal = () => {
                 const payload = { ...newWithdrawal, amount: Number(newWithdrawal.amount), date: newWithdrawal.date || new Date().toLocaleDateString() };
-                try {
-                    editingId ? await updateDoc(doc(colRef, editingId), payload) : await addDoc(colRef, { ...payload, createdAt: Date.now() });
-                    resetModals();
-                } catch (e) { console.error(e); }
+                if (editingId) {
+                    setWithdrawals(withdrawals.map(i => i.id === editingId ? { ...payload, id: editingId } : i));
+                } else {
+                    setWithdrawals([...withdrawals, { ...payload, id: Date.now() }]);
+                }
+                resetModals();
             };
 
-            const deleteItem = async (collectionName, id) => {
+            const deleteItem = (listName, id) => {
                 if(confirm('Tem certeza?')) {
-                    try { await deleteDoc(doc(db, 'artifacts', appId, 'public', 'data', collectionName, id)); } catch (e) { console.error(e); }
+                    if (listName === 'clients') setClients(clients.filter(i => i.id !== id));
+                    if (listName === 'purchases') setPurchases(purchases.filter(i => i.id !== id));
+                    if (listName === 'subscriptions') setSubscriptions(subscriptions.filter(i => i.id !== id));
+                    if (listName === 'withdrawals') setWithdrawals(withdrawals.filter(i => i.id !== id));
                 }
             };
 
             // Cálculos
             const totalReceived = clients.reduce((acc, c) => acc + (c.received || 0), 0);
-            const totalProjected = clients.reduce((acc, c) => acc + (c.charged || 0), 0);
-            const totalPurchases = purchases.reduce((acc, i) => acc + (i.price || 0), 0);
-            const totalSubs = subscriptions.reduce((acc, i) => acc + (i.price || 0), 0);
-            const totalWithdrawals = withdrawals.reduce((acc, i) => acc + (i.amount || 0), 0);
-            const totalExpenses = totalPurchases + totalWithdrawals + totalSubs;
+            const totalExpenses = purchases.reduce((acc, i) => acc + (i.price || 0), 0) + 
+                                  withdrawals.reduce((acc, i) => acc + (i.amount || 0), 0) +
+                                  subscriptions.reduce((acc, i) => acc + (i.price || 0), 0);
             const netProfit = totalReceived - totalExpenses;
 
             return (
@@ -303,7 +246,7 @@
                                 </button>
                             ))}
                         </nav>
-                        <div className="p-4"><p className="text-xs text-gray-600 text-center">v1.0 Web</p></div>
+                        <div className="p-4"><p className="text-xs text-gray-600 text-center">Versão Local Segura</p></div>
                     </aside>
 
                     {/* Mobile Nav */}
@@ -326,18 +269,8 @@
                             <h1 className="text-xl md:text-2xl font-bold text-gray-900 capitalize">
                                 {activeTab === 'dashboard' ? 'Visão Geral' : activeTab}
                             </h1>
-                            {!user && !authError && <span className="bg-yellow-100 text-yellow-800 text-xs px-2 py-1 rounded flex items-center gap-1 animate-pulse">Conectando...</span>}
-                            {authError && <span className="bg-red-100 text-red-800 text-xs px-2 py-1 rounded flex items-center gap-1 font-bold"><AlertTriangle size={12}/> {authError}</span>}
+                            <span className="bg-green-100 text-green-800 text-xs px-2 py-1 rounded flex items-center gap-1">Online (Local)</span>
                         </header>
-
-                        {/* Aviso de Erro Crítico de Auth */}
-                        {authError && (
-                            <div className="p-4 bg-red-50 border-b border-red-200 text-red-800 text-sm">
-                                <p className="font-bold mb-1">Atenção: O sistema não conseguiu conectar.</p>
-                                <p>Causa provável: {authError}</p>
-                                <p className="mt-2 text-xs">Vá no Firebase Console &gt; Authentication &gt; Sign-in method e ative o provedor "Anonymous".</p>
-                            </div>
-                        )}
 
                         <div className="p-4 md:p-8 max-w-7xl mx-auto">
                             {/* DASHBOARD */}
@@ -347,13 +280,13 @@
                                         <Card title="Faturamento" value={formatBRL(totalReceived)} icon={TrendingUp} trend="up" />
                                         <Card title="Despesas" value={formatBRL(totalExpenses)} icon={ShoppingBag} trend="down" />
                                         <Card title="Lucro" value={formatBRL(netProfit)} icon={Wallet} trend={netProfit >= 0 ? 'up' : 'down'} />
-                                        <Card title="Assinaturas/Mês" value={formatBRL(totalSubs)} icon={CreditCard} />
+                                        <Card title="Assinaturas/Mês" value={formatBRL(subscriptions.reduce((acc, i) => acc + (i.price || 0), 0))} icon={CreditCard} />
                                     </div>
                                     <div className="bg-white p-6 rounded-xl border border-gray-100 shadow-sm">
                                         <h3 className="font-bold mb-4">Últimos Projetos</h3>
                                         {clients.length === 0 ? <p className="text-gray-400">Sem dados.</p> : (
                                             <div className="space-y-2">
-                                                {clients.slice(-5).map(c => (
+                                                {clients.slice(-5).reverse().map(c => (
                                                     <div key={c.id} className="flex justify-between border-b pb-2">
                                                         <span>{c.name}</span>
                                                         <span className="font-bold text-green-600">{formatBRL(c.received)}</span>
@@ -419,7 +352,7 @@
                              {activeTab === 'subscriptions' && (
                                 <div className="space-y-6">
                                     <div className="flex justify-between items-center bg-blue-50 p-4 rounded-lg text-blue-800">
-                                        <span className="font-bold">Total Mensal: {formatBRL(totalSubs)}</span>
+                                        <span className="font-bold">Total Mensal: {formatBRL(subscriptions.reduce((acc, i) => acc + (i.price || 0), 0))}</span>
                                         <Button variant="primary" onClick={() => setIsSubModalOpen(true)}><Plus size={18}/></Button>
                                     </div>
                                     <div className="grid gap-4 grid-cols-1 md:grid-cols-2">
@@ -459,7 +392,7 @@
                         </div>
                     </main>
 
-                    {/* MODAIS SIMPLIFICADOS */}
+                    {/* MODAIS (Estrutura igual, só lógica simplificada) */}
                     <Modal isOpen={isClientModalOpen} onClose={resetModals} title="Projeto">
                         <div className="space-y-3">
                             <input className="w-full border p-2 rounded" placeholder="Nome" value={newClient.name} onChange={e => setNewClient({...newClient, name: e.target.value})} />
