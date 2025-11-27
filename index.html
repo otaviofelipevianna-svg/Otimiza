@@ -1,0 +1,513 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Otimiza CRM</title>
+    
+    <!-- 1. Tailwind CSS (Visual) -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    
+    <!-- 2. Babel (Para entender o código React no navegador) -->
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+
+    <!-- Fonte Inter -->
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;600;700&display=swap" rel="stylesheet">
+    <style>
+        body { font-family: 'Inter', sans-serif; }
+    </style>
+</head>
+<body class="bg-gray-50 text-gray-900">
+    <div id="root"></div>
+
+    <!-- 4. Seu Aplicativo -->
+    <script type="text/babel" data-type="module">
+        // Importações UNIFICADAS via ESM
+        import React, { useState, useEffect } from 'https://esm.sh/react@18.2.0';
+        import { createRoot } from 'https://esm.sh/react-dom@18.2.0/client';
+        import { 
+            LayoutDashboard, Users, ShoppingBag, CreditCard, Wallet, 
+            Plus, Trash2, Edit2, TrendingUp, CheckCircle, Clock, 
+            MessageCircle, Play, AlertTriangle 
+        } from 'https://esm.sh/lucide-react@0.292.0';
+        
+        // Importações do Firebase
+        import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js";
+        import { 
+            getFirestore, collection, addDoc, updateDoc, deleteDoc, doc, onSnapshot 
+        } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
+        import { 
+            getAuth, signInAnonymously, onAuthStateChanged 
+        } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-auth.js";
+
+        // --- SUA CONFIGURAÇÃO DO FIREBASE ---
+        const firebaseConfig = {
+            apiKey: "AIzaSyDQ8ggMxe09e6qf92B-1lv3A6gCP-J33Js",
+            authDomain: "otimiza-9e42f.firebaseapp.com",
+            projectId: "otimiza-9e42f",
+            storageBucket: "otimiza-9e42f.firebasestorage.app",
+            messagingSenderId: "482070105168",
+            appId: "1:482070105168:web:cf8aae2f888946f196d555",
+            measurementId: "G-HNWMPJ468D"
+        };
+
+        // Inicializar Firebase
+        const app = initializeApp(firebaseConfig);
+        const auth = getAuth(app);
+        const db = getFirestore(app);
+        const appId = 'otimiza-crm-web'; // ID fixo para web
+
+        // --- Componentes ---
+        const Card = ({ title, value, subtext, icon: Icon, trend }) => (
+            <div className="bg-white p-6 rounded-xl border border-gray-100 shadow-sm hover:shadow-md transition-shadow">
+                <div className="flex justify-between items-start">
+                    <div>
+                        <p className="text-gray-500 text-sm font-medium uppercase tracking-wider">{title}</p>
+                        <h3 className="text-2xl font-bold mt-2 text-gray-900">{value}</h3>
+                        {subtext && <p className={`text-sm mt-1 ${trend === 'up' ? 'text-green-600' : trend === 'down' ? 'text-red-600' : 'text-gray-400'}`}>{subtext}</p>}
+                    </div>
+                    <div className={`p-3 rounded-lg ${trend === 'up' ? 'bg-green-50 text-green-600' : trend === 'down' ? 'bg-red-50 text-red-600' : 'bg-black text-white'}`}>
+                        <Icon size={24} />
+                    </div>
+                </div>
+            </div>
+        );
+
+        const Button = ({ children, onClick, variant = 'primary', className = '' }) => {
+            const baseStyle = "px-4 py-2 rounded-lg font-medium transition-colors flex items-center gap-2";
+            const variants = {
+                primary: "bg-black text-white hover:bg-gray-800",
+                secondary: "bg-gray-100 text-gray-700 hover:bg-gray-200",
+                danger: "bg-red-50 text-red-600 hover:bg-red-100",
+                outline: "border border-gray-300 text-gray-700 hover:bg-gray-50"
+            };
+            return (
+                <button onClick={onClick} className={`${baseStyle} ${variants[variant]} ${className}`}>
+                    {children}
+                </button>
+            );
+        };
+
+        const Modal = ({ isOpen, onClose, title, children }) => {
+            if (!isOpen) return null;
+            return (
+                <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-50 p-4">
+                    <div className="bg-white rounded-2xl w-full max-w-lg shadow-2xl overflow-hidden animate-in fade-in zoom-in duration-200">
+                        <div className="p-6 border-b border-gray-100 flex justify-between items-center bg-gray-50">
+                            <h2 className="text-xl font-bold text-gray-900">{title}</h2>
+                            <button onClick={onClose} className="text-gray-400 hover:text-red-500 transition-colors">✕</button>
+                        </div>
+                        <div className="p-6">
+                            {children}
+                        </div>
+                    </div>
+                </div>
+            );
+        };
+
+        const StatusBadge = ({ status }) => {
+            const styles = {
+                'Negociação': 'bg-gray-100 text-gray-600 border-gray-200',
+                'Em Processo': 'bg-blue-50 text-blue-600 border-blue-100',
+                'Concluído': 'bg-green-50 text-green-600 border-green-100'
+            };
+            
+            const icons = {
+                'Negociação': MessageCircle,
+                'Em Processo': Clock,
+                'Concluído': CheckCircle
+            };
+
+            const Icon = icons[status] || MessageCircle;
+
+            return (
+                <span className={`px-3 py-1 rounded-full text-xs font-semibold border flex items-center gap-1 w-fit ${styles[status] || styles['Negociação']}`}>
+                    <Icon size={12} />
+                    {status}
+                </span>
+            );
+        };
+
+        // --- APP PRINCIPAL ---
+        function App() {
+            const [user, setUser] = useState(null);
+            const [authError, setAuthError] = useState(null); // Estado para erro de auth
+            const [activeTab, setActiveTab] = useState('dashboard');
+            
+            // Dados
+            const [clients, setClients] = useState([]);
+            const [purchases, setPurchases] = useState([]);
+            const [subscriptions, setSubscriptions] = useState([]);
+            const [withdrawals, setWithdrawals] = useState([]);
+
+            // Modais
+            const [isClientModalOpen, setIsClientModalOpen] = useState(false);
+            const [isPurchaseModalOpen, setIsPurchaseModalOpen] = useState(false);
+            const [isSubModalOpen, setIsSubModalOpen] = useState(false);
+            const [isWithdrawalModalOpen, setIsWithdrawalModalOpen] = useState(false);
+
+            // Edição
+            const [editingId, setEditingId] = useState(null);
+
+            // Forms
+            const initialClientState = { name: '', segment: '', works: '', charged: '', received: '', status: 'Negociação' };
+            const initialPurchaseState = { item: '', price: '', installments: '1', category: 'Equipamento' };
+            const initialSubState = { name: '', price: '' };
+            const initialWithdrawalState = { name: '', amount: '', description: '' };
+
+            const [newClient, setNewClient] = useState(initialClientState);
+            const [newPurchase, setNewPurchase] = useState(initialPurchaseState);
+            const [newSub, setNewSub] = useState(initialSubState);
+            const [newWithdrawal, setNewWithdrawal] = useState(initialWithdrawalState);
+
+            // Auth
+            useEffect(() => {
+                signInAnonymously(auth).catch((error) => {
+                    console.error("Erro de Autenticação:", error);
+                    let msg = "Erro desconhecido ao conectar.";
+                    if (error.code === 'auth/configuration-not-found' || error.code === 'auth/admin-restricted-operation') {
+                        msg = "A Autenticação Anônima não está ativada no Firebase Console.";
+                    } else if (error.code === 'auth/api-key-not-valid') {
+                        msg = "A API Key do Firebase é inválida.";
+                    }
+                    setAuthError(msg);
+                });
+                return onAuthStateChanged(auth, setUser);
+            }, []);
+
+            // Firestore Listeners
+            useEffect(() => {
+                if (!user) return;
+
+                const createListener = (collectionName, setter) => {
+                    const q = collection(db, 'artifacts', appId, 'public', 'data', collectionName);
+                    return onSnapshot(q, (snapshot) => {
+                        const data = snapshot.docs.map(doc => ({
+                            id: doc.id,
+                            ...doc.data()
+                        }));
+                        setter(data);
+                    }, (error) => console.error(`Erro ${collectionName}:`, error));
+                };
+
+                const unsubClients = createListener('clients', setClients);
+                const unsubPurchases = createListener('purchases', setPurchases);
+                const unsubSubs = createListener('subscriptions', setSubscriptions);
+                const unsubWithdrawals = createListener('withdrawals', setWithdrawals);
+
+                return () => {
+                    unsubClients(); unsubPurchases(); unsubSubs(); unsubWithdrawals();
+                };
+            }, [user]);
+
+            const formatBRL = (value) => new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(value || 0);
+
+            const resetModals = () => {
+                setEditingId(null);
+                setNewClient(initialClientState);
+                setNewPurchase(initialPurchaseState);
+                setNewSub(initialSubState);
+                setNewWithdrawal(initialWithdrawalState);
+                setIsClientModalOpen(false);
+                setIsPurchaseModalOpen(false);
+                setIsSubModalOpen(false);
+                setIsWithdrawalModalOpen(false);
+            };
+
+            // --- Handlers ---
+            const handleSaveClient = async () => {
+                if (!user) return;
+                const colRef = collection(db, 'artifacts', appId, 'public', 'data', 'clients');
+                const payload = { ...newClient, charged: Number(newClient.charged), received: Number(newClient.received) };
+                try {
+                    editingId ? await updateDoc(doc(colRef, editingId), payload) : await addDoc(colRef, { ...payload, createdAt: Date.now() });
+                    resetModals();
+                } catch (e) { console.error(e); alert('Erro ao salvar. Verifique permissões.'); }
+            };
+
+            const handleSavePurchase = async () => {
+                const colRef = collection(db, 'artifacts', appId, 'public', 'data', 'purchases');
+                const payload = { ...newPurchase, price: Number(newPurchase.price) };
+                try {
+                    editingId ? await updateDoc(doc(colRef, editingId), payload) : await addDoc(colRef, { ...payload, createdAt: Date.now() });
+                    resetModals();
+                } catch (e) { console.error(e); }
+            };
+
+            const handleSaveSub = async () => {
+                const colRef = collection(db, 'artifacts', appId, 'public', 'data', 'subscriptions');
+                const payload = { ...newSub, price: Number(newSub.price) };
+                try {
+                    editingId ? await updateDoc(doc(colRef, editingId), payload) : await addDoc(colRef, { ...payload, createdAt: Date.now() });
+                    resetModals();
+                } catch (e) { console.error(e); }
+            };
+
+            const handleSaveWithdrawal = async () => {
+                const colRef = collection(db, 'artifacts', appId, 'public', 'data', 'withdrawals');
+                const payload = { ...newWithdrawal, amount: Number(newWithdrawal.amount), date: newWithdrawal.date || new Date().toLocaleDateString() };
+                try {
+                    editingId ? await updateDoc(doc(colRef, editingId), payload) : await addDoc(colRef, { ...payload, createdAt: Date.now() });
+                    resetModals();
+                } catch (e) { console.error(e); }
+            };
+
+            const deleteItem = async (collectionName, id) => {
+                if(confirm('Tem certeza?')) {
+                    try { await deleteDoc(doc(db, 'artifacts', appId, 'public', 'data', collectionName, id)); } catch (e) { console.error(e); }
+                }
+            };
+
+            // Cálculos
+            const totalReceived = clients.reduce((acc, c) => acc + (c.received || 0), 0);
+            const totalProjected = clients.reduce((acc, c) => acc + (c.charged || 0), 0);
+            const totalPurchases = purchases.reduce((acc, i) => acc + (i.price || 0), 0);
+            const totalSubs = subscriptions.reduce((acc, i) => acc + (i.price || 0), 0);
+            const totalWithdrawals = withdrawals.reduce((acc, i) => acc + (i.amount || 0), 0);
+            const totalExpenses = totalPurchases + totalWithdrawals + totalSubs;
+            const netProfit = totalReceived - totalExpenses;
+
+            return (
+                <div className="flex h-screen bg-gray-50 text-gray-900 font-sans selection:bg-black selection:text-white">
+                    {/* Sidebar */}
+                    <aside className="w-64 bg-black text-white flex flex-col shadow-2xl z-20 hidden md:flex">
+                        <div className="p-6 border-b border-gray-800 flex flex-col items-center">
+                            <div className="mb-2">
+                                <img src="1.png" alt="Otimiza Logo" className="h-10 object-contain invert" onError={(e) => e.target.style.display='none'} />
+                                <div className="text-2xl font-bold tracking-tighter flex items-center gap-1">
+                                    Otimiza<Play className="fill-white" size={20}/>
+                                </div>
+                            </div>
+                            <p className="text-xs text-gray-500 uppercase tracking-widest mt-1">Produtora de Vídeo</p>
+                        </div>
+                        
+                        <nav className="flex-1 p-4 space-y-2">
+                            {[
+                                { id: 'dashboard', label: 'Dashboard', icon: LayoutDashboard },
+                                { id: 'clients', label: 'Projetos / CRM', icon: Users },
+                                { id: 'purchases', label: 'Compras', icon: ShoppingBag },
+                                { id: 'subscriptions', label: 'Assinaturas', icon: CreditCard },
+                                { id: 'team', label: 'Retiradas', icon: Wallet },
+                            ].map(item => (
+                                <button
+                                key={item.id}
+                                onClick={() => setActiveTab(item.id)}
+                                className={`w-full flex items-center gap-3 px-4 py-3 rounded-lg text-sm font-medium transition-all ${
+                                    activeTab === item.id 
+                                    ? 'bg-white text-black shadow-lg translate-x-1' 
+                                    : 'text-gray-400 hover:text-white hover:bg-gray-900'
+                                }`}
+                                >
+                                <item.icon size={18} />
+                                {item.label}
+                                </button>
+                            ))}
+                        </nav>
+                        <div className="p-4"><p className="text-xs text-gray-600 text-center">v1.0 Web</p></div>
+                    </aside>
+
+                    {/* Mobile Nav */}
+                    <div className="md:hidden fixed bottom-0 w-full bg-black text-white p-4 flex justify-around z-50">
+                         {[
+                                { id: 'dashboard', icon: LayoutDashboard },
+                                { id: 'clients', icon: Users },
+                                { id: 'purchases', icon: ShoppingBag },
+                                { id: 'team', icon: Wallet },
+                            ].map(item => (
+                                <button key={item.id} onClick={() => setActiveTab(item.id)} className={activeTab === item.id ? 'text-white' : 'text-gray-500'}>
+                                    <item.icon size={24} />
+                                </button>
+                        ))}
+                    </div>
+
+                    {/* Main */}
+                    <main className="flex-1 overflow-auto pb-20 md:pb-0">
+                        <header className="bg-white border-b border-gray-200 px-8 py-5 flex justify-between items-center sticky top-0 z-10 shadow-sm">
+                            <h1 className="text-xl md:text-2xl font-bold text-gray-900 capitalize">
+                                {activeTab === 'dashboard' ? 'Visão Geral' : activeTab}
+                            </h1>
+                            {!user && !authError && <span className="bg-yellow-100 text-yellow-800 text-xs px-2 py-1 rounded flex items-center gap-1 animate-pulse">Conectando...</span>}
+                            {authError && <span className="bg-red-100 text-red-800 text-xs px-2 py-1 rounded flex items-center gap-1 font-bold"><AlertTriangle size={12}/> {authError}</span>}
+                        </header>
+
+                        {/* Aviso de Erro Crítico de Auth */}
+                        {authError && (
+                            <div className="p-4 bg-red-50 border-b border-red-200 text-red-800 text-sm">
+                                <p className="font-bold mb-1">Atenção: O sistema não conseguiu conectar.</p>
+                                <p>Causa provável: {authError}</p>
+                                <p className="mt-2 text-xs">Vá no Firebase Console &gt; Authentication &gt; Sign-in method e ative o provedor "Anonymous".</p>
+                            </div>
+                        )}
+
+                        <div className="p-4 md:p-8 max-w-7xl mx-auto">
+                            {/* DASHBOARD */}
+                            {activeTab === 'dashboard' && (
+                                <div className="space-y-6">
+                                    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
+                                        <Card title="Faturamento" value={formatBRL(totalReceived)} icon={TrendingUp} trend="up" />
+                                        <Card title="Despesas" value={formatBRL(totalExpenses)} icon={ShoppingBag} trend="down" />
+                                        <Card title="Lucro" value={formatBRL(netProfit)} icon={Wallet} trend={netProfit >= 0 ? 'up' : 'down'} />
+                                        <Card title="Assinaturas/Mês" value={formatBRL(totalSubs)} icon={CreditCard} />
+                                    </div>
+                                    <div className="bg-white p-6 rounded-xl border border-gray-100 shadow-sm">
+                                        <h3 className="font-bold mb-4">Últimos Projetos</h3>
+                                        {clients.length === 0 ? <p className="text-gray-400">Sem dados.</p> : (
+                                            <div className="space-y-2">
+                                                {clients.slice(-5).map(c => (
+                                                    <div key={c.id} className="flex justify-between border-b pb-2">
+                                                        <span>{c.name}</span>
+                                                        <span className="font-bold text-green-600">{formatBRL(c.received)}</span>
+                                                    </div>
+                                                ))}
+                                            </div>
+                                        )}
+                                    </div>
+                                </div>
+                            )}
+
+                            {/* CLIENTES */}
+                            {activeTab === 'clients' && (
+                                <div className="space-y-6">
+                                    <div className="flex justify-end"><Button onClick={() => setIsClientModalOpen(true)}><Plus size={18}/> Novo</Button></div>
+                                    <div className="grid gap-4">
+                                        {clients.map(client => (
+                                            <div key={client.id} className="bg-white p-4 rounded-xl shadow-sm border flex flex-col md:flex-row justify-between md:items-center gap-4">
+                                                <div>
+                                                    <h3 className="font-bold">{client.name}</h3>
+                                                    <p className="text-xs text-gray-500">{client.segment}</p>
+                                                    <div className="mt-2"><StatusBadge status={client.status}/></div>
+                                                </div>
+                                                <div className="text-right">
+                                                    <p className="text-sm text-gray-500">Recebido</p>
+                                                    <p className="font-bold text-green-600">{formatBRL(client.received)}</p>
+                                                </div>
+                                                <div className="flex gap-2 justify-end">
+                                                    <button onClick={() => { setEditingId(client.id); setNewClient(client); setIsClientModalOpen(true); }} className="p-2 text-blue-500 bg-blue-50 rounded"><Edit2 size={16}/></button>
+                                                    <button onClick={() => deleteItem('clients', client.id)} className="p-2 text-red-500 bg-red-50 rounded"><Trash2 size={16}/></button>
+                                                </div>
+                                            </div>
+                                        ))}
+                                    </div>
+                                </div>
+                            )}
+
+                            {/* COMPRAS */}
+                            {activeTab === 'purchases' && (
+                                <div className="space-y-6">
+                                    <div className="flex justify-end"><Button onClick={() => setIsPurchaseModalOpen(true)}><Plus size={18}/> Nova</Button></div>
+                                    <div className="grid gap-4">
+                                        {purchases.map(item => (
+                                            <div key={item.id} className="bg-white p-4 rounded-xl shadow-sm border flex justify-between items-center">
+                                                <div>
+                                                    <h3 className="font-bold">{item.item}</h3>
+                                                    <p className="text-xs bg-gray-100 w-fit px-2 py-1 rounded mt-1">{item.category}</p>
+                                                </div>
+                                                <div className="text-right">
+                                                    <p className="font-bold text-red-600">-{formatBRL(item.price)}</p>
+                                                    <div className="flex gap-2 justify-end mt-2">
+                                                        <button onClick={() => { setEditingId(item.id); setNewPurchase(item); setIsPurchaseModalOpen(true); }} className="text-blue-500"><Edit2 size={16}/></button>
+                                                        <button onClick={() => deleteItem('purchases', item.id)} className="text-red-500"><Trash2 size={16}/></button>
+                                                    </div>
+                                                </div>
+                                            </div>
+                                        ))}
+                                    </div>
+                                </div>
+                            )}
+
+                             {/* ASSINATURAS */}
+                             {activeTab === 'subscriptions' && (
+                                <div className="space-y-6">
+                                    <div className="flex justify-between items-center bg-blue-50 p-4 rounded-lg text-blue-800">
+                                        <span className="font-bold">Total Mensal: {formatBRL(totalSubs)}</span>
+                                        <Button variant="primary" onClick={() => setIsSubModalOpen(true)}><Plus size={18}/></Button>
+                                    </div>
+                                    <div className="grid gap-4 grid-cols-1 md:grid-cols-2">
+                                        {subscriptions.map(item => (
+                                            <div key={item.id} className="bg-white p-4 rounded-xl shadow-sm border flex justify-between items-center">
+                                                <h3 className="font-bold">{item.name}</h3>
+                                                <div className="flex items-center gap-4">
+                                                    <span className="font-bold text-red-600">-{formatBRL(item.price)}</span>
+                                                    <button onClick={() => deleteItem('subscriptions', item.id)} className="text-red-500"><Trash2 size={16}/></button>
+                                                </div>
+                                            </div>
+                                        ))}
+                                    </div>
+                                </div>
+                            )}
+
+                            {/* RETIRADAS */}
+                            {activeTab === 'team' && (
+                                <div className="space-y-6">
+                                    <div className="flex justify-end"><Button onClick={() => setIsWithdrawalModalOpen(true)}><Plus size={18}/> Nova</Button></div>
+                                    <div className="grid gap-4">
+                                        {withdrawals.map(item => (
+                                            <div key={item.id} className="bg-white p-4 rounded-xl shadow-sm border flex justify-between items-center">
+                                                <div>
+                                                    <h3 className="font-bold">{item.name}</h3>
+                                                    <p className="text-xs text-gray-500">{item.description}</p>
+                                                </div>
+                                                <div className="text-right">
+                                                    <p className="font-bold text-red-600">-{formatBRL(item.amount)}</p>
+                                                    <button onClick={() => deleteItem('withdrawals', item.id)} className="text-red-500 mt-1"><Trash2 size={16}/></button>
+                                                </div>
+                                            </div>
+                                        ))}
+                                    </div>
+                                </div>
+                            )}
+                        </div>
+                    </main>
+
+                    {/* MODAIS SIMPLIFICADOS */}
+                    <Modal isOpen={isClientModalOpen} onClose={resetModals} title="Projeto">
+                        <div className="space-y-3">
+                            <input className="w-full border p-2 rounded" placeholder="Nome" value={newClient.name} onChange={e => setNewClient({...newClient, name: e.target.value})} />
+                            <input className="w-full border p-2 rounded" placeholder="Segmento" value={newClient.segment} onChange={e => setNewClient({...newClient, segment: e.target.value})} />
+                            <div className="grid grid-cols-2 gap-2">
+                                <input type="number" className="border p-2 rounded" placeholder="Cobrado (R$)" value={newClient.charged} onChange={e => setNewClient({...newClient, charged: e.target.value})} />
+                                <input type="number" className="border p-2 rounded" placeholder="Recebido (R$)" value={newClient.received} onChange={e => setNewClient({...newClient, received: e.target.value})} />
+                            </div>
+                            <select className="w-full border p-2 rounded" value={newClient.status} onChange={e => setNewClient({...newClient, status: e.target.value})}>
+                                <option>Negociação</option><option>Em Processo</option><option>Concluído</option>
+                            </select>
+                            <Button onClick={handleSaveClient} className="w-full justify-center mt-2">Salvar</Button>
+                        </div>
+                    </Modal>
+
+                    <Modal isOpen={isPurchaseModalOpen} onClose={resetModals} title="Compra">
+                         <div className="space-y-3">
+                            <input className="w-full border p-2 rounded" placeholder="Item" value={newPurchase.item} onChange={e => setNewPurchase({...newPurchase, item: e.target.value})} />
+                            <input type="number" className="w-full border p-2 rounded" placeholder="Preço (R$)" value={newPurchase.price} onChange={e => setNewPurchase({...newPurchase, price: e.target.value})} />
+                            <select className="w-full border p-2 rounded" value={newPurchase.category} onChange={e => setNewPurchase({...newPurchase, category: e.target.value})}>
+                                <option>Equipamento</option><option>Software</option><option>Outros</option>
+                            </select>
+                            <Button onClick={handleSavePurchase} className="w-full justify-center mt-2">Salvar</Button>
+                        </div>
+                    </Modal>
+                    
+                    <Modal isOpen={isSubModalOpen} onClose={resetModals} title="Assinatura">
+                         <div className="space-y-3">
+                            <input className="w-full border p-2 rounded" placeholder="Serviço" value={newSub.name} onChange={e => setNewSub({...newSub, name: e.target.value})} />
+                            <input type="number" className="w-full border p-2 rounded" placeholder="Valor Mensal (R$)" value={newSub.price} onChange={e => setNewSub({...newSub, price: e.target.value})} />
+                            <Button onClick={handleSaveSub} className="w-full justify-center mt-2">Salvar</Button>
+                        </div>
+                    </Modal>
+
+                    <Modal isOpen={isWithdrawalModalOpen} onClose={resetModals} title="Retirada">
+                         <div className="space-y-3">
+                            <input className="w-full border p-2 rounded" placeholder="Nome" value={newWithdrawal.name} onChange={e => setNewWithdrawal({...newWithdrawal, name: e.target.value})} />
+                            <input type="number" className="w-full border p-2 rounded" placeholder="Valor (R$)" value={newWithdrawal.amount} onChange={e => setNewWithdrawal({...newWithdrawal, amount: e.target.value})} />
+                            <input className="w-full border p-2 rounded" placeholder="Descrição" value={newWithdrawal.description} onChange={e => setNewWithdrawal({...newWithdrawal, description: e.target.value})} />
+                            <Button onClick={handleSaveWithdrawal} className="w-full justify-center mt-2">Salvar</Button>
+                        </div>
+                    </Modal>
+                </div>
+            );
+        }
+
+        const root = createRoot(document.getElementById('root'));
+        root.render(<App />);
+    </script>
+</body>
+</html>
